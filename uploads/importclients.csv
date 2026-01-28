@@ -1,0 +1,6 @@
+full_name,address1,address2,mobile_number,whatsapp_number,email,dob,aadhaar_number,pan_number,gst_number
+atest btest,surat,hirabug,1234567852,1234567872,atest@gmail.com,31-01-1991,1234 5678 9139,GFQJR7008A,07AAACC1206D2ZA
+ctest dtest,surat,hirabug,1234567853,1234567873,btest@gmail.com,09-01-1991,1235 5678 9140,GFQJR7008B,07AAACC1206D2ZB
+etest ftest,surat,hirabug,1234567854,1234567874,ctest@gmail.com,10-01-1991,1236 5678 9141,GFQJR7008C,07AAACC1206D2ZC
+gtest htest,surat,hirabug,1234567855,1234567875,dtest@gmail.com,11-01-1991,1237 5678 9142,GFQJR7008D,07AAACC1206D2ZD
+itest jtest,surat,hirabug,1234567859,1234567876,etest@gmail.com,12-01-1991,1238 5678 9138,GFQJR7008E,07AAACC1206D2ZE
