@@ -26,9 +26,9 @@ function runPython(scriptName, args = []) {
   return new Promise((resolve, reject) => {
     const pythonPath = path.join(__dirname, '../../python-engine', scriptName);
     const workingDir = path.join(__dirname, '../../python-engine');
-    const pythonCommand = process.platform === 'win32' ? 'py' : 'python';
+    const pythonCommand = process.platform === 'win32' ? 'py' : 'python3';
     
-    console.log('🐍 Running:', pythonCommand, scriptName);
+    console.log('🐍 Python:', pythonCommand, scriptName, 'Args:', args.length);
     
     const python = spawn(pythonCommand, [pythonPath, ...args], {
       cwd: workingDir,
@@ -39,29 +39,38 @@ function runPython(scriptName, args = []) {
     let errorString = '';
     
     python.stdout.on('data', (data) => {
-      dataString += data.toString();
+      const output = data.toString();
+      dataString += output;
+      console.log('📤 Python output:', output.substring(0, 200));
     });
     
     python.stderr.on('data', (data) => {
-      errorString += data.toString();
+      const error = data.toString();
+      errorString += error;
+      console.error('❌ Python error:', error);
     });
     
     python.on('close', (code) => {
+      console.log('🏁 Python finished with code:', code);
+      
       if (code !== 0) {
-        console.error('Python failed:', errorString);
-        reject(new Error(errorString || `Python exited with code ${code}`));
+        console.error('💥 Python failed:', errorString || dataString);
+        reject(new Error(errorString || dataString || `Exit code ${code}`));
       } else {
         try {
-          resolve(JSON.parse(dataString));
+          const result = JSON.parse(dataString);
+          console.log('✅ Parsed result:', result.success ? 'SUCCESS' : 'FAILED');
+          resolve(result);
         } catch (e) {
-          reject(new Error('Invalid JSON'));
+          console.error('⚠️ JSON parse error. Raw output:', dataString.substring(0, 500));
+          reject(new Error('Invalid JSON from Python'));
         }
       }
     });
   });
 }
 
-// AI Analyze
+// AI Analyze with AUTO-LOAD of visualizations
 router.post('/analyze', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
@@ -69,26 +78,68 @@ router.post('/analyze', upload.single('file'), async (req, res) => {
     }
     
     console.log('🤖 AI Analyzing:', req.file.originalname);
+    console.log('📂 File path:', req.file.path);
     
     fileStorage[req.file.originalname] = req.file.path;
     
+    // Run AI analysis
     const result = await runPython('improved_autonomous_ai.py', [req.file.path, 'analyze']);
     
+    if (!result.success) {
+      console.error('❌ AI analysis failed:', result.error);
+      return res.status(500).json(result);
+    }
+    
     console.log('✅ AI created', result.visualizations?.length || 0, 'visualizations');
+    
+    // AUTO-PREPARE DATA for all visualizations
+    if (result.visualizations && result.visualizations.length > 0) {
+      console.log('🔄 Auto-preparing data for all visualizations...');
+      
+      for (let i = 0; i < Math.min(result.visualizations.length, 10); i++) {
+        const viz = result.visualizations[i];
+        
+        try {
+          // Write config to temp file
+          const tempConfig = path.join(__dirname, '../../uploads', `config_${Date.now()}_${i}.json`);
+          fs.writeFileSync(tempConfig, JSON.stringify(viz), 'utf8');
+          
+          // Prepare data
+          const vizResult = await runPython('FIX_CHART_DATA.py', [
+            req.file.path,
+            'prepare_viz',
+            tempConfig
+          ]);
+          
+          // Add data to visualization
+          if (vizResult.success && vizResult.data) {
+            result.visualizations[i].data = vizResult.data;
+            console.log(`✅ Loaded data for viz ${i}: ${vizResult.data.length} points`);
+          }
+          
+          // Cleanup
+          try { fs.unlinkSync(tempConfig); } catch (e) {}
+          
+        } catch (error) {
+          console.error(`❌ Error preparing viz ${i}:`, error.message);
+        }
+      }
+    }
+    
     res.json(result);
     
   } catch (error) {
-    console.error('❌', error.message);
+    console.error('❌ Analyze error:', error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Prepare visualization - FIXED!
+// Manual viz preparation (backup)
 router.post('/prepare-viz', async (req, res) => {
   try {
     const { filename, viz_config } = req.body;
     
-    console.log('📊 Loading:', viz_config?.title);
+    console.log('📊 Manual viz prep:', viz_config?.title);
     
     let filepath = fileStorage[filename];
     if (!filepath || !fs.existsSync(filepath)) {
@@ -96,14 +147,14 @@ router.post('/prepare-viz', async (req, res) => {
     }
     
     if (!fs.existsSync(filepath)) {
+      console.error('❌ File not found:', filename);
       return res.status(404).json({ success: false, error: 'File not found' });
     }
     
-    // Write config to temp file
-    const tempConfig = path.join(__dirname, '../../uploads', `config_${Date.now()}.json`);
+    // Write config
+    const tempConfig = path.join(__dirname, '../../uploads', `config_manual_${Date.now()}.json`);
     fs.writeFileSync(tempConfig, JSON.stringify(viz_config), 'utf8');
     
-    // Use fixed chart data script
     const result = await runPython('FIX_CHART_DATA.py', [
       filepath,
       'prepare_viz',
@@ -113,21 +164,21 @@ router.post('/prepare-viz', async (req, res) => {
     // Cleanup
     try { fs.unlinkSync(tempConfig); } catch (e) {}
     
-    console.log('✅ Loaded:', result.data?.length || 0, 'data points');
+    console.log('✅ Manual viz loaded:', result.data?.length || 0, 'points');
     res.json(result);
     
   } catch (error) {
-    console.error('❌', error.message);
+    console.error('❌ Prepare viz error:', error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Generate ULTIMATE PREDICTIVE Report
+// Generate Report
 router.post('/generate-report', async (req, res) => {
   try {
     const { filename } = req.body;
     
-    console.log('📄 Generating ULTIMATE AI REPORT...');
+    console.log('📄 Generating report for:', filename);
     
     let filepath = fileStorage[filename];
     if (!filepath || !fs.existsSync(filepath)) {
@@ -138,14 +189,13 @@ router.post('/generate-report', async (req, res) => {
       return res.status(404).json({ success: false, error: 'File not found' });
     }
     
-    // Use ULTIMATE AI REPORT
     const result = await runPython('ULTIMATE_AI_REPORT.py', [filepath]);
     
     if (result.success) {
       const pdfPath = result.path;
       
       if (fs.existsSync(pdfPath)) {
-        console.log('✅ ULTIMATE REPORT generated!');
+        console.log('✅ Report generated:', result.filename);
         res.download(pdfPath, result.filename);
       } else {
         res.status(404).json({ success: false, error: 'PDF not found' });
@@ -155,7 +205,7 @@ router.post('/generate-report', async (req, res) => {
     }
     
   } catch (error) {
-    console.error('❌', error.message);
+    console.error('❌ Report error:', error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 });

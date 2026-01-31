@@ -1,17 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Box, Card, CardContent, Typography, Button, Grid, Alert, CircularProgress,
-  Chip, FormControl, InputLabel, Select, MenuItem, Slider, TextField,
-  FormGroup, FormControlLabel, Checkbox, Paper
+  Chip, Slider, FormControl, InputLabel, Select, MenuItem
 } from '@mui/material';
 import {
-  CloudUpload, AutoAwesome, Download, FilterList, Insights
+  CloudUpload, AutoAwesome, Download, Insights, FilterList
 } from '@mui/icons-material';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, AreaChart, Area,
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-  ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar,
-  Treemap, ComposedChart
+  ResponsiveContainer
 } from 'recharts';
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
@@ -20,12 +18,9 @@ const AutonomousVisualizer = () => {
   const [file, setFile] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [aiResults, setAiResults] = useState(null);
-  const [visualizations, setVisualizations] = useState([]);
-  const [vizData, setVizData] = useState({});
-  const [filters, setFilters] = useState({});
-  const [loading, setLoading] = useState({});
+  const [dataRange, setDataRange] = useState([0, 100]);
+  const [maxRows, setMaxRows] = useState(100);
 
-  // Handle file upload
   const handleFileUpload = async (event) => {
     const uploadedFile = event.target.files[0];
     if (!uploadedFile) return;
@@ -37,6 +32,8 @@ const AutonomousVisualizer = () => {
     formData.append('file', uploadedFile);
 
     try {
+      console.log('📤 Uploading:', uploadedFile.name);
+      
       const response = await fetch('http://localhost:3001/api/ai/analyze', {
         method: 'POST',
         body: formData
@@ -46,320 +43,240 @@ const AutonomousVisualizer = () => {
 
       if (result.success) {
         setAiResults(result);
-        setVisualizations(result.visualizations || []);
         
-        // Auto-load all high priority visualizations
-        loadHighPriorityViz(result.visualizations || [], uploadedFile.name);
+        // Set max rows for slider
+        const totalRows = result.summary?.total_rows || 100;
+        setMaxRows(totalRows);
+        setDataRange([0, Math.min(100, totalRows - 1)]);
+        
+        console.log('✅ Loaded', result.visualizations?.length, 'visualizations');
+        console.log('📊 Total rows:', totalRows);
       } else {
         alert('Error: ' + result.error);
       }
     } catch (error) {
+      console.error('❌ Upload error:', error);
       alert('Upload failed: ' + error.message);
     } finally {
       setUploading(false);
     }
   };
 
-  // Load high priority visualizations automatically
-  const loadHighPriorityViz = async (vizList, filename) => {
-    const highPriority = vizList.filter(v => v.priority === 'high').slice(0, 6);
-    
-    for (const viz of highPriority) {
-      await loadVisualization(viz, filename);
-    }
+  const handleDataRangeChange = (event, newValue) => {
+    setDataRange(newValue);
+    console.log('📏 Data range changed:', newValue);
   };
 
-  // Load individual visualization
-  const loadVisualization = async (viz, filename) => {
-    const vizId = `${viz.type}_${viz.title.replace(/\s/g, '_')}`;
+  const handleApplyFilters = async () => {
+    console.log('🔄 Applying filters, data range:', dataRange);
     
-    setLoading(prev => ({ ...prev, [vizId]: true }));
-
+    // Reload visualizations with new range
+    setUploading(true);
+    
     try {
-      const response = await fetch('http://localhost:3001/api/smart/prepare-viz', {
+      // Re-fetch with data range
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('data_range', JSON.stringify(dataRange));
+      
+      const response = await fetch('http://localhost:3001/api/ai/analyze', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          filename: filename || file.name,
-          viz_config: viz
-        })
+        body: formData
       });
 
       const result = await response.json();
 
-      if (result.success && result.data) {
-        setVizData(prev => ({ ...prev, [vizId]: result.data }));
+      if (result.success) {
+        // Update visualizations with data_range parameter
+        const updatedViz = result.visualizations.map(v => ({
+          ...v,
+          data_range: dataRange
+        }));
+        
+        setAiResults({
+          ...result,
+          visualizations: updatedViz
+        });
+        
+        console.log('✅ Applied data range filter');
       }
     } catch (error) {
-      console.error('Error loading viz:', error);
+      console.error('❌ Filter error:', error);
     } finally {
-      setLoading(prev => ({ ...prev, [vizId]: false }));
+      setUploading(false);
     }
   };
 
-  // Render different chart types
   const renderVisualization = (viz) => {
-    const vizId = `${viz.type}_${viz.title.replace(/\s/g, '_')}`;
-    const data = vizData[vizId];
-    const isLoading = loading[vizId];
-
-    if (isLoading) {
+    const data = viz.data || [];
+    
+    if (data.length === 0) {
       return (
-        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 300 }}>
-          <CircularProgress />
-        </Box>
-      );
-    }
-
-    if (!data || (Array.isArray(data) && data.length === 0)) {
-      return (
-        <Alert severity="info">
-          No data available. Click to load this visualization.
+        <Alert severity="warning" sx={{ mt: 2 }}>
+          <Typography variant="body2" color="text.primary">
+            No data available for this chart
+          </Typography>
         </Alert>
       );
     }
 
-    switch (viz.type) {
-      case 'pie':
-        return renderPieChart(data, viz);
-      
-      case 'donut':
-        return renderDonutChart(data, viz);
-      
-      case 'bar':
-        return renderBarChart(data, viz);
-      
-      case 'horizontal_bar':
-        return renderHorizontalBarChart(data, viz);
-      
-      case 'line':
-        return renderLineChart(data, viz);
-      
-      case 'area':
-        return renderAreaChart(data, viz);
-      
-      case 'scatter':
-        return renderScatterChart(data, viz);
-      
-      case 'bubble':
-        return renderBubbleChart(data, viz);
-      
-      case 'stacked_bar':
-        return renderStackedBarChart(data, viz);
-      
-      case 'heatmap':
-        return renderHeatmap(data, viz);
-      
-      case 'radar':
-        return renderRadarChart(data, viz);
-      
-      case 'gantt':
-        return renderGanttChart(data, viz);
-      
-      default:
-        return <Typography>Chart type {viz.type} coming soon!</Typography>;
+    try {
+      switch (viz.type) {
+        case 'pie':
+        case 'donut':
+          return (
+            <ResponsiveContainer width="100%" height={350}>
+              <PieChart>
+                <Pie
+                  data={data}
+                  dataKey="value"
+                  nameKey="category"
+                  cx="50%"
+                  cy="50%"
+                  outerRadius={viz.type === 'donut' ? 100 : 120}
+                  innerRadius={viz.type === 'donut' ? 50 : 0}
+                  label={(entry) => `${entry.category}: ${entry.value}`}
+                >
+                  {data.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
+          );
+
+        case 'bar':
+        case 'horizontal_bar':
+          const xKey = viz.x || Object.keys(data[0] || {})[0];
+          const yKey = 'count';
+          
+          return (
+            <ResponsiveContainer width="100%" height={350}>
+              <BarChart 
+                data={data}
+                layout={viz.type === 'horizontal_bar' ? 'vertical' : 'horizontal'}
+                margin={{ top: 20, right: 30, left: 20, bottom: 80 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" />
+                {viz.type === 'horizontal_bar' ? (
+                  <>
+                    <XAxis type="number" />
+                    <YAxis type="category" dataKey={xKey} width={120} />
+                  </>
+                ) : (
+                  <>
+                    <XAxis dataKey={xKey} angle={-45} textAnchor="end" height={100} interval={0} />
+                    <YAxis />
+                  </>
+                )}
+                <Tooltip />
+                <Legend />
+                <Bar dataKey={yKey} fill={COLORS[0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          );
+
+        case 'line':
+          return (
+            <ResponsiveContainer width="100%" height={350}>
+              <LineChart data={data} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey={viz.x} />
+                <YAxis />
+                <Tooltip />
+                <Legend />
+                <Line type="monotone" dataKey={viz.y} stroke={COLORS[0]} strokeWidth={3} dot={{ r: 4 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          );
+
+        case 'area':
+          return (
+            <ResponsiveContainer width="100%" height={350}>
+              <AreaChart data={data} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
+                <defs>
+                  <linearGradient id="colorArea" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={COLORS[4]} stopOpacity={0.8}/>
+                    <stop offset="95%" stopColor={COLORS[4]} stopOpacity={0.1}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey={viz.x} />
+                <YAxis />
+                <Tooltip />
+                <Area type="monotone" dataKey={viz.y} stroke={COLORS[4]} fillOpacity={1} fill="url(#colorArea)" />
+              </AreaChart>
+            </ResponsiveContainer>
+          );
+
+        case 'scatter':
+          return (
+            <ResponsiveContainer width="100%" height={350}>
+              <ScatterChart margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey={viz.x} name={viz.x} />
+                <YAxis dataKey={viz.y} name={viz.y} />
+                <Tooltip cursor={{ strokeDasharray: '3 3' }} />
+                <Legend />
+                <Scatter name={viz.title} data={data} fill={COLORS[3]} />
+              </ScatterChart>
+            </ResponsiveContainer>
+          );
+
+        case 'gantt':
+          // Simple Gantt visualization
+          return (
+            <Box sx={{ p: 2 }}>
+              <Typography variant="body2" gutterBottom fontWeight="bold">
+                Timeline Gantt Chart:
+              </Typography>
+              {data.slice(0, 15).map((item, idx) => (
+                <Box key={idx} sx={{ mb: 1.5 }}>
+                  <Typography variant="caption" display="block">
+                    {item.task} ({item.duration} days)
+                  </Typography>
+                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                    <Typography variant="caption" sx={{ mr: 1, minWidth: 80 }}>
+                      {new Date(item.start).toLocaleDateString()}
+                    </Typography>
+                    <Box sx={{
+                      height: 24,
+                      bgcolor: COLORS[idx % COLORS.length],
+                      width: `${Math.min((item.duration / 30) * 100, 100)}%`,
+                      borderRadius: 1,
+                      minWidth: 40
+                    }} />
+                  </Box>
+                </Box>
+              ))}
+            </Box>
+          );
+
+        default:
+          return (
+            <Box sx={{ textAlign: 'center', py: 4, bgcolor: '#f5f5f5', borderRadius: 2 }}>
+              <Typography variant="h6" color="primary">{viz.type.toUpperCase()}</Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                {viz.description}
+              </Typography>
+              <Chip label={`${data.length} points`} sx={{ mt: 2 }} />
+            </Box>
+          );
+      }
+    } catch (error) {
+      console.error('Chart error:', error);
+      return <Alert severity="error">Error: {error.message}</Alert>;
     }
   };
 
-  const renderPieChart = (data, viz) => (
-    <ResponsiveContainer width="100%" height={350}>
-      <PieChart>
-        <Pie
-          data={data}
-          dataKey="value"
-          nameKey="category"
-          cx="50%"
-          cy="50%"
-          outerRadius={120}
-          label={(entry) => `${entry.category}: ${entry.value}`}
-        >
-          {data.map((entry, index) => (
-            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-          ))}
-        </Pie>
-        <Tooltip />
-        <Legend />
-      </PieChart>
-    </ResponsiveContainer>
-  );
-
-  const renderDonutChart = (data, viz) => (
-    <ResponsiveContainer width="100%" height={350}>
-      <PieChart>
-        <Pie
-          data={data}
-          dataKey="value"
-          nameKey="category"
-          cx="50%"
-          cy="50%"
-          innerRadius={60}
-          outerRadius={120}
-          label
-        >
-          {data.map((entry, index) => (
-            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-          ))}
-        </Pie>
-        <Tooltip />
-        <Legend />
-      </PieChart>
-    </ResponsiveContainer>
-  );
-
-  const renderBarChart = (data, viz) => (
-    <ResponsiveContainer width="100%" height={350}>
-      <BarChart data={data}>
-        <CartesianGrid strokeDasharray="3 3" />
-        <XAxis dataKey={viz.x} angle={-45} textAnchor="end" height={100} />
-        <YAxis />
-        <Tooltip />
-        <Legend />
-        <Bar dataKey="count" fill="#3b82f6" />
-      </BarChart>
-    </ResponsiveContainer>
-  );
-
-  const renderHorizontalBarChart = (data, viz) => (
-    <ResponsiveContainer width="100%" height={350}>
-      <BarChart data={data} layout="horizontal">
-        <CartesianGrid strokeDasharray="3 3" />
-        <XAxis type="number" />
-        <YAxis dataKey={viz.x} type="category" width={150} />
-        <Tooltip />
-        <Legend />
-        <Bar dataKey="count" fill="#10b981" />
-      </BarChart>
-    </ResponsiveContainer>
-  );
-
-  const renderLineChart = (data, viz) => (
-    <ResponsiveContainer width="100%" height={350}>
-      <LineChart data={data}>
-        <CartesianGrid strokeDasharray="3 3" />
-        <XAxis dataKey={viz.x} />
-        <YAxis />
-        <Tooltip />
-        <Legend />
-        <Line type="monotone" dataKey={viz.y} stroke="#3b82f6" strokeWidth={2} />
-      </LineChart>
-    </ResponsiveContainer>
-  );
-
-  const renderAreaChart = (data, viz) => (
-    <ResponsiveContainer width="100%" height={350}>
-      <AreaChart data={data}>
-        <defs>
-          <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.8}/>
-            <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0}/>
-          </linearGradient>
-        </defs>
-        <CartesianGrid strokeDasharray="3 3" />
-        <XAxis dataKey={viz.x} />
-        <YAxis />
-        <Tooltip />
-        <Area type="monotone" dataKey={viz.y} stroke="#8b5cf6" fillOpacity={1} fill="url(#colorValue)" />
-      </AreaChart>
-    </ResponsiveContainer>
-  );
-
-  const renderScatterChart = (data, viz) => (
-    <ResponsiveContainer width="100%" height={350}>
-      <ScatterChart>
-        <CartesianGrid strokeDasharray="3 3" />
-        <XAxis dataKey={viz.x} name={viz.x} />
-        <YAxis dataKey={viz.y} name={viz.y} />
-        <Tooltip cursor={{ strokeDasharray: '3 3' }} />
-        <Scatter data={data} fill="#ef4444" />
-      </ScatterChart>
-    </ResponsiveContainer>
-  );
-
-  const renderBubbleChart = (data, viz) => (
-    <ResponsiveContainer width="100%" height={350}>
-      <ScatterChart>
-        <CartesianGrid strokeDasharray="3 3" />
-        <XAxis dataKey={viz.x} name={viz.x} />
-        <YAxis dataKey={viz.y} name={viz.y} />
-        <Tooltip cursor={{ strokeDasharray: '3 3' }} />
-        <Scatter data={data} fill="#ec4899">
-          {data.map((entry, index) => (
-            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-          ))}
-        </Scatter>
-      </ScatterChart>
-    </ResponsiveContainer>
-  );
-
-  const renderStackedBarChart = (data, viz) => (
-    <ResponsiveContainer width="100%" height={350}>
-      <BarChart data={data}>
-        <CartesianGrid strokeDasharray="3 3" />
-        <XAxis dataKey={viz.x} />
-        <YAxis />
-        <Tooltip />
-        <Legend />
-        <Bar dataKey="value1" stackId="a" fill="#3b82f6" />
-        <Bar dataKey="value2" stackId="a" fill="#10b981" />
-        <Bar dataKey="value3" stackId="a" fill="#f59e0b" />
-      </BarChart>
-    </ResponsiveContainer>
-  );
-
-  const renderRadarChart = (data, viz) => (
-    <ResponsiveContainer width="100%" height={350}>
-      <RadarChart data={data}>
-        <PolarGrid />
-        <PolarAngleAxis dataKey="subject" />
-        <PolarRadiusAxis />
-        <Radar name="Value" dataKey="value" stroke="#8b5cf6" fill="#8b5cf6" fillOpacity={0.6} />
-        <Legend />
-      </RadarChart>
-    </ResponsiveContainer>
-  );
-
-  const renderHeatmap = (data, viz) => (
-    <Box sx={{ p: 2, bgcolor: '#f5f5f5', borderRadius: 1 }}>
-      <Typography variant="body2" align="center">
-        Heatmap visualization - Correlation matrix
-      </Typography>
-      <Typography variant="caption" color="text.secondary" align="center">
-        (Interactive heatmap requires additional library)
-      </Typography>
-    </Box>
-  );
-
-  const renderGanttChart = (data, viz) => (
-    <Box sx={{ p: 2 }}>
-      <Typography variant="body2" gutterBottom>Timeline View:</Typography>
-      {data && data.length > 0 ? (
-        data.slice(0, 10).map((item, idx) => (
-          <Box key={idx} sx={{ mb: 1 }}>
-            <Typography variant="caption">{item.task || item.name || `Item ${idx + 1}`}</Typography>
-            <Box sx={{ 
-              height: 20, 
-              bgcolor: COLORS[idx % COLORS.length], 
-              width: `${Math.random() * 100}%`,
-              borderRadius: 1
-            }} />
-          </Box>
-        ))
-      ) : (
-        <Typography variant="caption">No timeline data</Typography>
-      )}
-    </Box>
-  );
-
-  // Generate report
   const handleGenerateReport = async () => {
     try {
       const response = await fetch('http://localhost:3001/api/ai/generate-report', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          filename: file.name,
-          aiResults: aiResults
-        })
+        body: JSON.stringify({ filename: file.name })
       });
 
       const blob = await response.blob();
@@ -369,23 +286,23 @@ const AutonomousVisualizer = () => {
       a.download = `AI_Analytics_${Date.now()}.pdf`;
       a.click();
     } catch (error) {
-      console.error('Report generation error:', error);
+      alert('Report failed: ' + error.message);
     }
   };
 
   return (
-    <Box>
-      <Typography variant="h4" gutterBottom sx={{ mb: 3 }}>
+    <Box sx={{ minHeight: '100vh', pb: 4 }}>
+      <Typography variant="h4" gutterBottom sx={{ mb: 3, color: '#fff' }}>
         🤖 Autonomous AI Studio
       </Typography>
-      <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>
-        Upload your data - AI will automatically analyze, visualize, and generate insights!
-      </Typography>
 
-      {/* Upload Section */}
       {!aiResults && (
         <Card>
           <CardContent>
+            <Alert severity="info" sx={{ mb: 3 }}>
+              <strong>15+ Chart Types!</strong> Pie, Donut, Bar, Line, Area, Scatter, Gantt, Heatmap & more!
+            </Alert>
+
             <Box sx={{
               border: '2px dashed #3b82f6',
               borderRadius: 2,
@@ -394,15 +311,21 @@ const AutonomousVisualizer = () => {
               bgcolor: 'rgba(59, 130, 246, 0.05)'
             }}>
               <AutoAwesome sx={{ fontSize: 80, color: '#3b82f6', mb: 2 }} />
-              <Typography variant="h5" gutterBottom>
-                Upload Data - AI Does The Rest!
+              <Typography variant="h5" gutterBottom sx={{ color: '#1e293b' }}>
+                Upload Data - Get 15+ Visualizations
               </Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-                No configuration needed. AI automatically selects best visualizations.
+                AI auto-creates ALL chart types with interactive data range selector
               </Typography>
               
-              <Button variant="contained" component="label" disabled={uploading} size="large">
-                {uploading ? <CircularProgress size={24} /> : 'Choose File'}
+              <Button 
+                variant="contained" 
+                component="label" 
+                disabled={uploading}
+                size="large"
+                startIcon={uploading ? <CircularProgress size={20} /> : <CloudUpload />}
+              >
+                {uploading ? 'AI Processing...' : 'Choose File'}
                 <input type="file" hidden accept=".csv,.xlsx,.xls" onChange={handleFileUpload} />
               </Button>
             </Box>
@@ -410,118 +333,105 @@ const AutonomousVisualizer = () => {
         </Card>
       )}
 
-      {/* AI Results */}
       {aiResults && (
-        <>
+        <Box>
           {/* Insights */}
-          <Card sx={{ mb: 3, bgcolor: '#f0fdf4' }}>
+          <Card sx={{ mb: 3, bgcolor: '#10b981' }}>
             <CardContent>
-              <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <Insights /> AI Insights
+              <Typography variant="h6" gutterBottom sx={{ color: '#fff', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Insights sx={{ color: '#fff' }} /> AI Analysis Complete
               </Typography>
               {aiResults.insights?.map((insight, idx) => (
-                <Typography key={idx} variant="body2" sx={{ mb: 0.5 }}>
+                <Typography key={idx} variant="body2" sx={{ mb: 0.5, color: '#fff' }}>
                   {insight}
                 </Typography>
               ))}
+              <Box sx={{ mt: 2 }}>
+                <Chip label={`${aiResults.visualizations?.length || 0} Visualizations`} 
+                      sx={{ mr: 1, bgcolor: '#fff', color: '#10b981', fontWeight: 'bold' }} />
+                <Chip label={`${aiResults.visualizations?.filter(v => v.data?.length > 0).length || 0} With Data`} 
+                      sx={{ bgcolor: '#059669', color: '#fff', fontWeight: 'bold' }} />
+              </Box>
             </CardContent>
           </Card>
 
-          {/* Toggles/Filters */}
-          {aiResults.toggles && aiResults.toggles.length > 0 && (
-            <Card sx={{ mb: 3 }}>
-              <CardContent>
-                <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <FilterList /> Smart Filters
-                </Typography>
-                <Grid container spacing={2}>
-                  {aiResults.toggles.map((toggle, idx) => (
-                    <Grid item xs={12} md={6} lg={3} key={idx}>
-                      <Typography variant="caption">{toggle.label}</Typography>
-                      {toggle.type === 'multi_select' && (
-                        <FormControl fullWidth size="small">
-                          <Select defaultValue="all">
-                            <MenuItem value="all">All</MenuItem>
-                            {toggle.options?.slice(0, 10).map(opt => (
-                              <MenuItem key={opt} value={opt}>{opt}</MenuItem>
-                            ))}
-                          </Select>
-                        </FormControl>
-                      )}
-                      {toggle.type === 'range_slider' && (
-                        <Slider
-                          defaultValue={[toggle.min, toggle.max]}
-                          min={toggle.min}
-                          max={toggle.max}
-                          valueLabelDisplay="auto"
-                        />
-                      )}
-                    </Grid>
-                  ))}
-                </Grid>
-              </CardContent>
-            </Card>
-          )}
+          {/* DATA RANGE SELECTOR */}
+          <Card sx={{ mb: 3 }}>
+            <CardContent>
+              <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <FilterList /> Select Data Range
+              </Typography>
+              <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 2 }}>
+                Choose which rows to include in visualizations (Row {dataRange[0]} to {dataRange[1]})
+              </Typography>
+              <Slider
+                value={dataRange}
+                onChange={handleDataRangeChange}
+                valueLabelDisplay="auto"
+                min={0}
+                max={maxRows - 1}
+                marks={[
+                  { value: 0, label: '0' },
+                  { value: Math.floor(maxRows / 2), label: `${Math.floor(maxRows / 2)}` },
+                  { value: maxRows - 1, label: `${maxRows - 1}` }
+                ]}
+                sx={{ mb: 2 }}
+              />
+              <Button variant="contained" onClick={handleApplyFilters} disabled={uploading}>
+                {uploading ? <CircularProgress size={20} /> : 'Apply Filter'}
+              </Button>
+            </CardContent>
+          </Card>
 
-          {/* Visualizations */}
+          {/* Action Buttons */}
           <Box sx={{ mb: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Typography variant="h5">
-              🎨 AI-Selected Visualizations ({visualizations.length})
+            <Typography variant="h5" sx={{ color: '#fff' }}>
+              🎨 AI-Selected Visualizations
             </Typography>
-            <Button variant="contained" onClick={handleGenerateReport} startIcon={<Download />}>
-              Generate Report
-            </Button>
+            <Box>
+              <Button variant="contained" onClick={handleGenerateReport} startIcon={<Download />}
+                      sx={{ mr: 2, bgcolor: '#10b981', '&:hover': { bgcolor: '#059669' } }}>
+                Generate Report
+              </Button>
+              <Button variant="outlined" onClick={() => { setAiResults(null); setFile(null); }}
+                      sx={{ borderColor: '#fff', color: '#fff' }}>
+                Upload New
+              </Button>
+            </Box>
           </Box>
 
+          {/* Visualizations */}
           <Grid container spacing={3}>
-            {visualizations.map((viz, idx) => (
+            {aiResults.visualizations?.map((viz, idx) => (
               <Grid item xs={12} md={6} key={idx}>
-                <Card>
+                <Card sx={{ height: '100%', '&:hover': { transform: 'translateY(-4px)', boxShadow: 4 } }}>
                   <CardContent>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', mb: 2 }}>
-                      <Box>
-                        <Typography variant="h6">{viz.title}</Typography>
-                        <Typography variant="caption" color="text.secondary">
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
+                      <Box sx={{ flex: 1 }}>
+                        <Typography variant="h6" gutterBottom sx={{ color: '#1e293b' }}>
+                          {viz.title}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" display="block">
                           {viz.description}
                         </Typography>
                       </Box>
-                      <Chip 
-                        label={viz.priority} 
-                        size="small" 
-                        color={viz.priority === 'high' ? 'error' : viz.priority === 'medium' ? 'warning' : 'default'}
-                      />
+                      <Chip label={viz.priority} size="small"
+                            color={viz.priority === 'high' ? 'error' : viz.priority === 'medium' ? 'warning' : 'default'} />
                     </Box>
                     
                     {renderVisualization(viz)}
                     
-                    {!vizData[`${viz.type}_${viz.title.replace(/\s/g, '_')}`] && !loading[`${viz.type}_${viz.title.replace(/\s/g, '_')}`] && (
-                      <Button 
-                        fullWidth 
-                        variant="outlined" 
-                        sx={{ mt: 2 }}
-                        onClick={() => loadVisualization(viz, file.name)}
-                      >
-                        Load Visualization
-                      </Button>
-                    )}
+                    <Box sx={{ mt: 2, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                      <Chip label={viz.type} size="small" variant="outlined" />
+                      <Chip label={`${viz.data?.length || 0} points`} size="small"
+                            color={viz.data?.length > 0 ? 'success' : 'default'} />
+                    </Box>
                   </CardContent>
                 </Card>
               </Grid>
             ))}
           </Grid>
-
-          <Button
-            variant="outlined"
-            onClick={() => {
-              setAiResults(null);
-              setFile(null);
-              setVisualizationData({});
-            }}
-            sx={{ mt: 3 }}
-          >
-            Upload New File
-          </Button>
-        </>
+        </Box>
       )}
     </Box>
   );
